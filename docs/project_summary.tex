@@ -1,0 +1,121 @@
+\documentclass[10pt]{article}
+\usepackage[letterpaper, margin=0.5in, top=0.45in, bottom=0.38in]{geometry}
+\usepackage{amsmath}
+\usepackage{mathptmx}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs,tabularx,enumitem,titlesec,xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\linespread{0.955}
+\titleformat{\section}{\normalsize\bfseries}{}{0pt}{}
+\titlespacing*{\section}{0pt}{5pt}{2pt}
+\setlist{itemsep=1pt, topsep=2pt, parsep=0pt, leftmargin=14pt}
+\pagestyle{empty}
+\urlstyle{same}
+
+\begin{document}
+
+{\Large\bfseries Metastability Characterizer for GF180 Flip-Flops}\par\vspace{2pt}
+ECE 298A, University of Waterloo \quad$\cdot$\quad Benjamin Eisenberg and Roshan Hegde \quad$\cdot$\quad Tiny Tapeout, GF180MCU\par
+\textbf{Status:} design in progress; target shuttle submission 7 December 2026.
+
+\section{Purpose}
+This project aims to improve the speed and reliability of data transfer between digital circuits operating on
+independent clocks. When a signal changes close to the clock edge of the flip-flop that receives it, the flip-flop can
+enter a metastable state: its output lingers between logic 0 and logic 1 and resolves only after an unbounded,
+probabilistic delay~\cite{ginosar}. The probability that the output remains unresolved after a time $t$ decays as
+$e^{-t/\tau}$, where the resolution time constant $\tau$ is set by the regeneration of the flip-flop's internal
+latch~\cite{ginosar,portmann}. Because $\tau$ appears in an exponent, a modest reduction in $\tau$ produces a large
+reduction in failure rate. Measured values of $\tau$ in modern processes have been worse than device scaling would
+suggest~\cite{devolution}, and the circuit design of the flip-flop is one of the principal factors that set
+it~\cite{eleven}. Prior work has analysed how transistor mismatch and unequal loading affect the metastable behaviour of CMOS latches~\cite{jeppson}, and has proposed latch circuits that accelerate resolution~\cite{zhou,oracle}.
+
+The chip measures $\tau$ for four flip-flops fabricated side by side under identical conditions: the GF180 library cell
+\texttt{dffq\_1}, a baseline flip-flop built from standard logic cells, a design
+incorporating one targeted modification, and a control variant. In ngspice simulations using the GF180MCU process
+models~\cite{pdk,ngspice}, the modified design's resolution time constant is approximately 11\% shorter than the
+baseline's at typical conditions (57.5\,ps against 64.5\,ps). The purpose of the chip is to test this prediction in
+silicon.
+
+\section{How it works}
+The chip implements the on-chip early/late sampling method of Beer \emph{et al.}~\cite{iscas}. A sequencer driven by the
+20\,MHz system clock runs one trial every 200\,ns, or five million trials per second.
+\begin{itemize}
+\item \textbf{Stimulus.} A 31-stage ring oscillator, divided by four, produces data edges that are asynchronous to the
+  system clock. An external data pin can be selected instead.
+\item \textbf{Capture.} All four flip-flops capture the same data on a shared capture clock. A 4:1 multiplexer selects
+  one flip-flop for observation.
+\item \textbf{Early sample.} The selected output is sampled after a programmable delay $d_k$, chosen from 16 settings
+  spaced approximately 45\,ps apart.
+\item \textbf{Late samples.} The output is sampled again at 50\,ns and 100\,ns, when it has settled. A disagreement
+  between the early and late samples indicates that the flip-flop had not resolved by $d_k$.
+\item \textbf{Counting and calibration.} Disagreements $K$ are counted over blocks of $N = 255$ trials and held on the
+  output pins for readout; a calibration mode measures the actual delay of each setting on the chip.
+\end{itemize}
+Off chip, the disagreement rate $\hat{p}_k = K/N$ is computed for each setting, $\ln \hat{p}_k$ is fitted against the
+calibrated delay $d_k$, and $\tau = -1/\text{slope}$. Because all four flip-flops share one delay line and one
+calibration, ratios of $\tau$ between flip-flops are insensitive to errors in the delay scale.
+
+\noindent\begin{minipage}[t]{0.53\linewidth}
+\section{Pinout (draft)}
+{\footnotesize
+\begin{tabularx}{\linewidth}{@{}X l l@{}}
+\toprule
+Signal & Dir. & Pins \\
+\midrule
+Clock, active-low reset & In & \texttt{clk}, \texttt{rst\_n} \\
+Flip-flop select [1:0] & In & \texttt{ui[3]}, \texttt{uio[6]} (bit 1) \\
+Delay code [3:0] & In & \texttt{ui[2:0]}, \texttt{uio[7]} (bit 3) \\
+Start, source, ext.\ data, mode & In & \texttt{ui[4]}--\texttt{ui[7]} \\
+Ring oscillator enable & In & \texttt{uio[0]} \\
+Held 8-bit count & Out & \texttt{uo[7:0]} \\
+Busy, done, fault & Out & \texttt{uio[1]}--\texttt{uio[3]} \\
+Source and trial monitors & Out & \texttt{uio[4]}, \texttt{uio[5]} \\
+\bottomrule
+\end{tabularx}}
+\par\vspace{5pt}
+{\small \textbf{Key parameters:} GF180MCU standard cells~\cite{pdk}; 3.3\,V supply (to be confirmed); one Tiny Tapeout tile, about
+1{,}900 transistors (estimate); 20\,MHz clock; $5\times10^{6}$ trials/s; 16 delay settings; $\pm3\%$ target on $\tau$ ratios.\par\vspace{2pt}
+\textbf{Team:} Benjamin Eisenberg (flip-flop design, circuit simulation, delay line, analysis) and Roshan Hegde
+(sequencer, counters, readout, verification); integration, layout checks and testing are shared.}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.43\linewidth}
+\section{How to test}
+The Tiny Tapeout demo board supplies the 20\,MHz clock, drives the inputs and reads the outputs~\cite{tt}.
+\begin{enumerate}
+\item Hold \texttt{rst\_n} low, start the clock, release reset.
+\item In calibration mode, step through the 16 delay codes; for each, assert START, wait for DONE, record the count.
+\item In measurement mode, enable the ring oscillator and select it as the source. For each flip-flop and delay code,
+  assert START, wait for DONE, read \texttt{uo[7:0]}; discard any block that raises FAULT.
+\item Fit $\ln \hat{p}_k$ against the calibrated delays to obtain $\tau$.
+\end{enumerate}
+An oscilloscope on \texttt{uio[4]} and \texttt{uio[5]} confirms that the source toggles and that trials occur every
+200\,ns.
+\end{minipage}
+
+\begingroup\scriptsize
+\renewcommand{\section}[2]{\vspace{2pt}{\normalsize\bfseries References}\par\vspace{0pt}}
+\setlength{\itemsep}{0pt}
+\begin{thebibliography}{11}\setlength{\itemsep}{0.5pt}\setlength{\parskip}{0pt}
+\bibitem{ginosar} R.~Ginosar, ``Metastability and synchronizers: A tutorial,'' \emph{IEEE Design \& Test of
+Computers}, vol.~28, no.~5, pp.~23--35, 2011.
+\bibitem{devolution} S.~Beer, R.~Ginosar, M.~Priel, R.~Dobkin, and A.~Kolodny, ``The devolution of synchronizers,'' in
+\emph{Proc.\ IEEE ASYNC}, 2010, pp.~94--103,
+doi:~10.1109/ASYNC.2010.22.
+\bibitem{iscas} S.~Beer, R.~Ginosar, M.~Priel, R.~Dobkin, and A.~Kolodny, ``An on-chip metastability measurement
+circuit to characterize synchronization behavior in 65nm,'' in \emph{Proc.\ IEEE ISCAS}, 2011, pp.~2593--2596, doi:~10.1109/ISCAS.2011.5938135.
+\bibitem{eleven} S.~Beer and R.~Ginosar, ``Eleven ways to boost your synchronizer,'' \emph{IEEE Trans.\ VLSI Systems}, vol.~23, no.~6, pp.~1040--1049, 2015, doi:~10.1109/TVLSI.2014.2331331.
+\bibitem{portmann} C.~L.~Portmann, ``Characterization and reduction of metastability errors in CMOS interface
+circuits,'' Ph.D.\ dissertation, Stanford University, 1995, Tech.\ Rep.\ CSL-TR-95-671.
+\bibitem{pdk} GF180MCU open-source PDK and \texttt{gf180mcu\_fd\_sc\_mcu7t5v0} standard-cell library, \url{https://gf180mcu-pdk.readthedocs.io}.
+\bibitem{ngspice} ngspice, open-source mixed-signal circuit simulator, version~42, \url{https://ngspice.sourceforge.io}.
+\bibitem{tt} Tiny Tapeout documentation: tile pinout and demo board, \url{https://tinytapeout.com}.
+\bibitem{jeppson} K.~O.~Jeppson, ``Comments on the metastable behavior of mismatched CMOS latches,'' \emph{IEEE J.\ Solid-State Circuits}, vol.~31, no.~2, pp.~275--277, 1996.
+\bibitem{zhou} J.~Zhou, D.~Kinniment, G.~Russell, and A.~Yakovlev, ``A robust synchronizer,'' in \emph{Proc.\ IEEE ISVLSI}, 2006, pp.~442--443, doi:~10.1109/ISVLSI.2006.12.
+\bibitem{oracle} I.~W.~Jones, S.~Yang, M.~R.~Greenstreet, H.~N.~Gaywala, and R.~J.~Drost, ``Synchronizer latch circuit that facilitates resolving metastability,'' U.S.\ Patent 8{,}552{,}779 B2 (Oracle), Oct.~8, 2013.
+\end{thebibliography}
+\endgroup
+
+\end{document}
